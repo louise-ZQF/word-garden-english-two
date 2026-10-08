@@ -10,10 +10,15 @@
     const active=eligible(state);let selection;
     if(mode==='star')selection=active.filter(w=>w.starred&&(w.lastDay!==day||(w.lapseDay===day&&w.status==='learning')));
     else if(mode==='all')selection=active;
-    else {const used=Object.values(state.words).filter(w=>w.firstDay===day&&!w.starred).length;const freshGroups=new Map();for(const w of active.filter(w=>!w.reviews&&!w.starred)){let key=w.primaryGroup||'custom';if(!freshGroups.has(key))freshGroups.set(key,[]);freshGroups.get(key).push(w);}const fresh=shuffle([...freshGroups.values()]).flatMap(g=>shuffle(g)).slice(0,Math.max(0,state.settings.limit-used));selection=[...due(state,day),...fresh];}
+    else selection=[...due(state,day),...active.filter(w=>!w.reviews&&!w.starred)];
     const buckets=new Map();for(const w of selection){const id=w.primaryGroup||'custom';if(!buckets.has(id))buckets.set(id,[]);buckets.get(id).push(w.word);}
     const entries=shuffle([...buckets.entries()]);entries.sort((a,b)=>Number(b[1].some(k=>state.words[k].starred))-Number(a[1].some(k=>state.words[k].starred)));
     return entries.flatMap(([,items])=>shuffle(items));
+  }
+  function extendSession(state){
+    const s=state.session;if(!s||s.mode!=='today'||s.group)return 0;
+    const queued=new Set(s.queue),additions=plan(state,s.day).filter(word=>!queued.has(word));
+    s.queue.push(...additions);return additions.length;
   }
   function grade(word,known,day=today()){
     const first=!word.reviews,sameSuccess=word.lastSuccessDay===day||(!word.lastSuccessDay&&word.lastDay===day&&word.status==='known');
@@ -70,10 +75,11 @@
       }
     }return [...out.values()];
   }
-  function createState(catalog){return {version:1,words:Object.fromEntries(catalog.map(w=>[w.word,{...w,starred:false,removed:false,reviews:0,streak:0,status:'new',lastDay:null,due:null}])),excluded:[],history:[],settings:{limit:30,mode:'keyboard',theme:'light'},session:null};}
+  function createState(catalog){return {version:1,words:Object.fromEntries(catalog.map(w=>[w.word,{...w,starred:false,removed:false,reviews:0,streak:0,status:'new',lastDay:null,due:null}])),excluded:[],history:[],settings:{mode:'keyboard',theme:'light'},session:null};}
   function validateBackup(obj){if(!obj||obj.version!==1||!obj.words||Array.isArray(obj.words)||!Array.isArray(obj.excluded)||!Array.isArray(obj.history)||!obj.settings)throw new Error('不是词间的有效备份文件');
     const words={};for(const [key,w] of Object.entries(obj.words)){if(!w||typeof w.word!=='string'||normalize(key)!==normalize(w.word)||typeof w.meaning!=='string')throw new Error('备份中有无效词条');let word=normalize(w.word);if(word==='__proto__'||word==='constructor'||!(/^[a-z][a-z'’ -]*$/i.test(word)))throw new Error('词条格式错误');words[word]={...w,word,groups:Array.isArray(w.groups)?w.groups.filter(x=>typeof x==='string'):[],reviews:Math.max(0,Number(w.reviews)||0),streak:Math.max(0,Number(w.streak)||0),starred:!!w.starred,removed:!!w.removed};}
-    return {...obj,words,excluded:[...new Set(obj.excluded.filter(x=>typeof x==='string').map(normalize))],settings:{...obj.settings,limit:Math.max(1,Math.min(300,Number(obj.settings.limit)||30))},session:null};
+    const settings={...obj.settings};delete settings.limit;
+    return {...obj,words,excluded:[...new Set(obj.excluded.filter(x=>typeof x==='string').map(normalize))],settings,session:null};
   }
-  return {normalize,today,plusDays,shuffle,eligible,due,plan,grade,prepareSession,chooseAnswer,commitAnswer,parseInput,createState,validateBackup};
+  return {normalize,today,plusDays,shuffle,eligible,due,plan,extendSession,grade,prepareSession,chooseAnswer,commitAnswer,parseInput,createState,validateBackup};
 });

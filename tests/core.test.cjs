@@ -71,3 +71,35 @@ test('unfinished mistakes carried into another day still need two correct recall
  assert.equal(answer(s,true).repeat,true);assert.equal(s.words.recall.status,'learning');assert.deepEqual(C.plan(s,'2026-10-09'),['recall']);
  assert.equal(answer(s,true).repeat,false);assert.equal(s.words.recall.due,'2026-10-10');
 });
+function largeCatalog(size=75){return Array.from({length:size},(_,i)=>({word:'word'+String.fromCharCode(97+Math.floor(i/26))+String.fromCharCode(97+i%26),meaning:'测试词',primaryGroup:'custom'}));}
+test('daily learning queues every fresh word regardless of an old quota or prior new-word count',()=>{
+ const s=C.createState(largeCatalog());s.settings.limit=1;
+ assert.equal(C.plan(s,day).length,75);
+ const learned=Object.values(s.words).slice(0,35);for(const w of learned)C.grade(w,true,day);
+ assert.equal(C.plan(s,day).length,40);
+ assert.ok(C.plan(s,day).every(word=>!s.words[word].reviews));
+});
+test('existing short queues expand while preserving current choice, order, history, and practice',()=>{
+ const s=C.createState(largeCatalog());const first=Object.keys(s.words).slice(0,30);
+ s.settings.limit=30;s.session={day,mode:'today',queue:[...first],index:2,finished:2,practice:{[first[1]]:{correct:1}},roundVersion:2,attempts:{}};
+ for(const word of first.slice(0,2)){C.grade(s.words[word],true,day);s.history.push({day,word,known:true});}
+ C.chooseAnswer(s.session,s.words[first[2]],true);
+ const pending=structuredClone(s.session.pending),history=structuredClone(s.history),practice=structuredClone(s.session.practice);
+ assert.equal(C.extendSession(s),45);assert.deepEqual(s.session.queue.slice(0,30),first);assert.equal(s.session.index,2);
+ assert.deepEqual(s.session.pending,pending);assert.deepEqual(s.history,history);assert.deepEqual(s.session.practice,practice);
+ assert.equal(C.extendSession(s),0);assert.equal(new Set(s.session.queue).size,75);
+ const newcomer={word:'newcomer',meaning:'新加入的词',reviews:0};s.words.newcomer=newcomer;
+ assert.equal(C.extendSession(s),1);assert.ok(s.session.queue.includes('newcomer'));
+});
+test('unlimited learning excludes removed words, keeps due priority words, and leaves focused rounds alone',()=>{
+ const s=C.createState(largeCatalog(40)),words=Object.values(s.words);
+ words[0].removed=true;s.excluded.push(words[1].word);words[2].starred=true;C.grade(words[2],true,'2026-10-07');
+ const queue=C.plan(s,day);assert.equal(queue.length,38);assert.ok(queue.includes(words[2].word));assert.ok(!queue.includes(words[0].word));assert.ok(!queue.includes(words[1].word));
+ s.session={day,mode:'star',queue:[words[2].word],index:0};assert.equal(C.extendSession(s),0);
+ s.session={day,mode:'all',group:'custom',queue:[words[3].word],index:0};assert.equal(C.extendSession(s),0);
+});
+test('new states omit quotas and old backups restore records without retaining quota settings',()=>{
+ const s=fixture();assert.ok(!Object.hasOwn(s.settings,'limit'));answer(s,false);s.settings.limit=7;
+ const restored=C.validateBackup(JSON.parse(JSON.stringify(s)));
+ assert.ok(!Object.hasOwn(restored.settings,'limit'));assert.deepEqual(restored.history,s.history);assert.equal(restored.words.recall.reviews,1);assert.equal(restored.words.recall.status,'learning');
+});
