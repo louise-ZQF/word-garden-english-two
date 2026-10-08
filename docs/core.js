@@ -5,10 +5,10 @@
   function plusDays(day,n){const d=new Date(day+'T12:00:00Z');d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10);}
   function shuffle(items,random=Math.random){const a=[...items];for(let i=a.length-1;i>0;i--){let j=Math.floor(random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
   function eligible(state){return Object.values(state.words).filter(w=>!w.removed&&!state.excluded.includes(w.word));}
-  function due(state,day=today()){return eligible(state).filter(w=>w.lastDay!==day&&(w.starred||(w.reviews>0&&(!w.due||w.due<=day))));}
+  function due(state,day=today()){return eligible(state).filter(w=>(w.lastDay!==day&&(w.starred||(w.reviews>0&&(!w.due||w.due<=day))))||(w.lastDay===day&&w.lapseDay===day&&w.status==='learning'));}
   function plan(state,day=today(),mode='today'){
     const active=eligible(state);let selection;
-    if(mode==='star')selection=active.filter(w=>w.starred&&w.lastDay!==day);
+    if(mode==='star')selection=active.filter(w=>w.starred&&(w.lastDay!==day||(w.lapseDay===day&&w.status==='learning')));
     else if(mode==='all')selection=active;
     else {const used=Object.values(state.words).filter(w=>w.firstDay===day&&!w.starred).length;const freshGroups=new Map();for(const w of active.filter(w=>!w.reviews&&!w.starred)){let key=w.primaryGroup||'custom';if(!freshGroups.has(key))freshGroups.set(key,[]);freshGroups.get(key).push(w);}const fresh=shuffle([...freshGroups.values()]).flatMap(g=>shuffle(g)).slice(0,Math.max(0,state.settings.limit-used));selection=[...due(state,day),...fresh];}
     const buckets=new Map();for(const w of selection){const id=w.primaryGroup||'custom';if(!buckets.has(id))buckets.set(id,[]);buckets.get(id).push(w.word);}
@@ -16,9 +16,46 @@
     return entries.flatMap(([,items])=>shuffle(items));
   }
   function grade(word,known,day=today()){
-    const first=!word.reviews;word.reviews=(word.reviews||0)+1;word.lastDay=day;if(first)word.firstDay=day;
-    word.streak=known?(word.streak||0)+1:0;word.status=known?'known':'learning';
-    const intervals=[1,3,7,14,30];word.due=plusDays(day,word.starred||!known?1:intervals[Math.min(word.streak-1,4)]);return word;
+    const first=!word.reviews,sameSuccess=word.lastSuccessDay===day||(!word.lastSuccessDay&&word.lastDay===day&&word.status==='known');
+    word.reviews=(word.reviews||0)+1;word.lastDay=day;if(first)word.firstDay=day;
+    if(known){word.streak=sameSuccess?Math.max(1,word.streak||0):(word.streak||0)+1;word.lastSuccessDay=day;}
+    else {word.streak=0;word.lapseDay=day;}
+    word.status=known?'known':'learning';
+    const intervals=[1,3,7,14,30];word.due=plusDays(day,word.starred||!known||word.lapseDay===day?1:intervals[Math.min(word.streak-1,4)]);return word;
+  }
+  function prepareSession(state){
+    const s=state.session;if(!s)return;
+    if(s.roundVersion!==2){
+      s.practice={};
+      for(const h of state.history.filter(h=>h.day===s.day&&!h.known)){
+        s.practice[h.word]={correct:0};const w=state.words[h.word];
+        if(w&&!w.removed&&!state.excluded.includes(w.word)){w.lapseDay=s.day;w.status='learning';w.due=plusDays(s.day,1);if(!s.queue.slice(s.index).includes(w.word))s.queue.push(w.word);}
+      }
+      if(s.awaiting){const word=s.queue[s.index];s.pending={word,known:false,recalled:false,legacyCommitted:true};if(word)s.practice[word]={correct:0};}
+      s.roundVersion=2;
+    }
+    s.practice ||= {};s.attempts ||= {};
+  }
+  // Ratings remain provisional while the definition is visible.
+  function chooseAnswer(session,word,known,revealed=false){
+    const previous=session.pending;
+    session.pending={word:word.word,known:!!known,recalled:previous?previous.recalled&&!previous.legacyCommitted:!revealed&&!session.peeked,legacyCommitted:!!previous?.legacyCommitted};
+    session.revealed=true;session.awaiting=true;
+    return session.pending;
+  }
+  function commitAnswer(state,word){
+    const s=state.session,p=s?.pending;if(!p||p.word!==word.word)return null;
+    prepareSession(state);
+    const known=p.known&&p.recalled,wasLearning=word.status==='learning';
+    if(!p.legacyCommitted){grade(word,known,s.day);state.history.push({day:s.day,word:word.word,known,mode:s.mode});s.finished=(s.finished||0)+1;s.attempts[word.word]=(s.attempts[word.word]||0)+1;}
+    let practice=s.practice[word.word];
+    if(!known&&!practice)practice=s.practice[word.word]={correct:0};
+    if(known&&(word.lapseDay===s.day||wasLearning)&&!practice)practice=s.practice[word.word]={correct:0};
+    let repeat=false;
+    if(practice){practice.correct=known?practice.correct+1:0;repeat=practice.correct<2;word.status=repeat?'learning':'known';word.lapseDay=s.day;word.due=plusDays(s.day,1);}
+    if(repeat&&!s.queue.slice(s.index+1).includes(word.word))s.queue.splice(Math.min(s.queue.length,s.index+4),0,word.word);
+    s.index++;s.pending=null;s.revealed=false;s.awaiting=false;s.peeked=false;
+    return {known,repeat,correct:practice?.correct||0};
   }
   function parseInput(text,dictionary={}){
     let chunks=String(text).replace(/\r/g,'').split(/[\n;；]+/);const out=new Map();
@@ -38,5 +75,5 @@
     const words={};for(const [key,w] of Object.entries(obj.words)){if(!w||typeof w.word!=='string'||normalize(key)!==normalize(w.word)||typeof w.meaning!=='string')throw new Error('备份中有无效词条');let word=normalize(w.word);if(word==='__proto__'||word==='constructor'||!(/^[a-z][a-z'’ -]*$/i.test(word)))throw new Error('词条格式错误');words[word]={...w,word,groups:Array.isArray(w.groups)?w.groups.filter(x=>typeof x==='string'):[],reviews:Math.max(0,Number(w.reviews)||0),streak:Math.max(0,Number(w.streak)||0),starred:!!w.starred,removed:!!w.removed};}
     return {...obj,words,excluded:[...new Set(obj.excluded.filter(x=>typeof x==='string').map(normalize))],settings:{...obj.settings,limit:Math.max(1,Math.min(300,Number(obj.settings.limit)||30))},session:null};
   }
-  return {normalize,today,plusDays,shuffle,eligible,due,plan,grade,parseInput,createState,validateBackup};
+  return {normalize,today,plusDays,shuffle,eligible,due,plan,grade,prepareSession,chooseAnswer,commitAnswer,parseInput,createState,validateBackup};
 });
