@@ -1,0 +1,19 @@
+词间 · 英语二基础补词
+
+本网站为个人学习工具。候选库经人工选择、分组与释义清理，补充了部分常见派生词释义。
+完整词目来源、版本口径与适用限制见网站“设置与备份 → 词库说明”。
+
+NETEMVocabulary
+https://github.com/exam-data/NETEMVocabulary
+数据来自2024年考纲整理与多类考试语料，非英语二专属考频。
+词汇数据采用 CC BY-NC-SA 4.0；本网站对这部分数据的整理、清理和分组同样按该许可共享。
+https://creativecommons.org/licenses/by-nc-sa/4.0/
+许可全文：LICENSE-netem.txt
+
+KyleBing/english-vocabulary
+https://github.com/KyleBing/english-vocabulary
+Copyright (c) 2022-2026, KyleBing
+BSD-3-Clause；保留原许可全文：LICENSE-vocabulary-BSD.txt
+
+界面视觉参考：https://cxyonly.fans/math
+代码与分组说明由本项目独立编写，未复制参考网站源码或品牌资产。
